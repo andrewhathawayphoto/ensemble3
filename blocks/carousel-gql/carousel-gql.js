@@ -1,126 +1,171 @@
+import AdobeAemHeadlessClientJs from 'https://cdn.skypack.dev/pin/@adobe/aem-headless-client-js@v3.2.0-R5xKUKJyh8kNAfej66Zg/mode=imports,min/optimized/@adobe/aem-headless-client-js.js';
 
 import { createOptimizedPicture } from '../../scripts/aem.js';
+import { getConfigValue } from '../../scripts/configs.js';
 
-export default function decorate(block) {
-  const link = block.querySelector('a');
-  let data = [];
-  let totalSlides;
+async function fetchCarouselData(block) {
+  //extract persisted query from block
+  let persistedQuery = '';
+  const divElements = block.querySelectorAll('div > div');
 
-  block.textContent = '';
-
-  function sortData(data) {
-    const result = [];
-    const groupSize = 9;
-
-    for (let i = 0; i < data.length; i += groupSize) {
-      result.push(data.slice(i, i + groupSize));
+  divElements.forEach((element, index) => {
+    const textContent = element.textContent.trim();
+    if (textContent === 'Persisted Query' && index + 1 < divElements.length) {
+      const nextElement = divElements[index + 1];
+      if (nextElement) {
+        persistedQuery = nextElement.textContent.trim();
+      }
     }
-    return result;
-  }
+  });
 
-  function createSlides(sortedGroups) {
-    const updatedSlides = [];
+  block.innerHTML = '';
 
-    sortedGroups.forEach(group => {
-      const slideDiv = document.createElement('div');
-      slideDiv.classList.add('slide');
+  try {
+    const AEM_HOST = await getConfigValue('aem-host');
+    const AEM_GRAPHQL_ENDPOINT = await getConfigValue('aem-graphql-endpoint');
+    const AUTH_TOKEN = await getConfigValue('auth');
 
-      group.forEach(customer => {
-        const optimizedImage = createOptimizedPicture(
-          customer.image,
-          customer.name,
-          true,
-          [{ width: '210' }],
-        );
-
-        const cardHtml = `<div class="card">${optimizedImage.outerHTML}</div>`;
-        slideDiv.innerHTML += cardHtml;
-      });
-
-      updatedSlides.push(slideDiv.outerHTML);
+    const AEM_HEADLESS_CLIENT = new AdobeAemHeadlessClientJs({
+      serviceURL: AEM_HOST,
+      auth: AUTH_TOKEN,
     });
+    let dataObj = {};
 
-    block.innerHTML = `<div class="carousel-adobe-wrapper">
-      <div class="cards-carousel">
-        ${updatedSlides.join('')}
-      </div>
-      <div class="carousel-nav-controls">
-        <button class="arrow left-arrow">
-          <img src="/icons/left-arrow.png" title="Left Arrow Icon"/>
-        </button>
-        <button class="arrow right-arrow">
-          <img src="/icons/right-arrow.png" title="Right Arrow Icon"/>
-        </button>
-      </div>
-    </div>`;
-
-    const carousel = block.querySelector('.cards-carousel');
-    carousel.style.width = `${sortedGroups.length * 100}%`;
-
-    // Calculate totalSlides here, after the slides are created
-    totalSlides = block.querySelectorAll('.slide').length;
-
-    addEventListeners(totalSlides);
-  }
-
-  let currentSlide = 0;
-  function showSlide(index) {
-    // Calculate the new left offset of the carousel
-    const newLeftOffset = index * -100; // 100% is the width of each slide
-    block.querySelector('.cards-carousel').style.left = newLeftOffset + '%';
-
-    // Add or remove 'disabled' class based on the current slide
-    const leftArrow = block.querySelector('.left-arrow');
-    const rightArrow = block.querySelector('.right-arrow');
-
-    if (index === 0) {
-      leftArrow.classList.add('disabled');
-    } else {
-      leftArrow.classList.remove('disabled');
+    if (persistedQuery) {
+      const endpoint = `${AEM_GRAPHQL_ENDPOINT}${persistedQuery}`;
+      dataObj = await AEM_HEADLESS_CLIENT.runPersistedQuery(endpoint);
     }
 
-    if (index === totalSlides - 1) {
-      rightArrow.classList.add('disabled');
-    } else {
-      rightArrow.classList.remove('disabled');
-    }
+    const data = dataObj?.data?.edsWorkshopCarouselList?.items;
+    return data;
+  } catch (e) {
+    console.error('Unexpected error while fetching GraphQL data:', e);
+    return [];
+  }
+}
+
+function groupDataByTitle(data) {
+  const groupedData = {};
+  data.forEach(item => {
+    const groupKey = item.title.toLowerCase().replace(/\s+/g, '-');
+    groupedData[groupKey] = item;
+  });
+  return groupedData;
+}
+
+function createCarouselCard(card, key) {
+  const cardContainer = document.createElement('div');
+  cardContainer.classList.add('card', key);
+  const imageContainer = document.createElement('div');
+  imageContainer.classList.add('image-wrapper');
+  const infoContainer = document.createElement('div');
+  infoContainer.classList.add('info-wrapper');
+
+  const title = document.createElement('p');
+  title.textContent = card.title;
+
+  const services = document.createElement('p');
+  services.textContent = card.services;
+
+  const description = document.createElement('p');
+  description.textContent = card.description;
+
+  const image = createOptimizedPicture(card.referenceImage, card.title, true, [
+    { width: '210' },
+  ]);
+
+  infoContainer.appendChild(title);
+  infoContainer.appendChild(services);
+  infoContainer.appendChild(description);
+  imageContainer.appendChild(image);
+  cardContainer.appendChild(imageContainer);
+  cardContainer.appendChild(infoContainer);
+
+  return cardContainer;
+}
+
+function renderData(groupedData, block) {
+  const carouselInner = document.createElement('div');
+  carouselInner.classList.add('carousel-container');
+
+  const navContainer = document.createElement('div');
+  navContainer.classList.add('carousel-nav');
+  const prevButton = document.createElement('button');
+  const prevIcon = document.createElement('img');
+  prevIcon.src = '/icons/left-arrow.png';
+  prevButton.classList.add('left-arrow');
+  prevButton.appendChild(prevIcon);
+
+  const nextButton = document.createElement('button');
+  const nextIcon = document.createElement('img');
+  nextIcon.src = '/icons/right-arrow.png';
+  nextButton.classList.add('right-arrow');
+  nextButton.appendChild(nextIcon);
+
+  block.appendChild(prevButton);
+  block.appendChild(carouselInner);
+  block.appendChild(nextButton);
+  navContainer.appendChild(prevButton);
+  navContainer.appendChild(nextButton);
+  block.appendChild(navContainer);
+
+  function determineCardCount() {
+    return window.innerWidth < 768 ? 1 : 2;
   }
 
-  function addEventListeners(totalSlides) {
-    const leftArrow = block.querySelector('.left-arrow');
-    const rightArrow = block.querySelector('.right-arrow');
+  Object.keys(groupedData).forEach((key, index) => {
+    const card = groupedData[key];
+    const cardElement = createCarouselCard(card, key);
+    let currentIndex = 0;
+    if (index >= currentIndex && index < currentIndex + determineCardCount()) {
+      cardElement.classList.add('active');
+    }
+    carouselInner.appendChild(cardElement);
+  });
 
-    leftArrow.addEventListener('click', () => {
-      if (currentSlide > 0) {
-        currentSlide--;
-        showSlide(currentSlide);
+  let currentIndex = 0;
+  const totalItems = Object.keys(groupedData).length;
+
+  function updateActiveCard() {
+    const cards = carouselInner.querySelectorAll('.card');
+    const cardCount = determineCardCount();
+    if (currentIndex >= totalItems) {
+      currentIndex = 0;
+    }
+
+    cards.forEach((card, index) => {
+      if (index >= currentIndex && index < currentIndex + cardCount) {
+        card.classList.add('active');
+      } else {
+        card.classList.remove('active');
       }
     });
-
-    rightArrow.addEventListener('click', () => {
-      if (currentSlide < totalSlides - 1) {
-        currentSlide++;
-        showSlide(currentSlide);
-      }
-    });
-
-    // Initially add the 'disabled' class to the left arrow
-    leftArrow.classList.add('disabled');
   }
 
-  async function initialize() {
-    const response = await fetch(link?.href);
+  prevButton.addEventListener('click', () => {
+    const cardCount = determineCardCount();
+    currentIndex = (currentIndex - cardCount + totalItems) % totalItems;
+    updateActiveCard();
+  });
 
-    if (response.ok) {
-      const jsonData = await response.json();
-      data = jsonData?.data;
+  nextButton.addEventListener('click', () => {
+    const cardCount = determineCardCount();
+    currentIndex = (currentIndex + cardCount) % totalItems;
+    updateActiveCard();
+  });
 
-      let sortedGroups = sortData(data);
-      createSlides(sortedGroups);
-    } else {
-      console.log('Unable to get json data for cards customers block');
+  window.addEventListener('resize', () => {
+    const cardCount = determineCardCount();
+    if (currentIndex >= totalItems - cardCount + 1) {
+      currentIndex = cardCount > totalItems ? 0 : totalItems - cardCount;
     }
-  }
 
-  initialize();
+    updateActiveCard();
+  });
+}
+
+export default async function decorate(block) {
+  const data = await fetchCarouselData(block);
+  const groupedData = groupDataByTitle(data);
+  renderData(groupedData, block);
 }
