@@ -32,7 +32,7 @@ function submitForm() {
   console.log(body);
 
   // change link to your email-form URL
-  fetch('/email-form', {
+  fetch('https://main--ensembledotcom-andrewhathawayphoto.aem.page/email-form', {
     method: "POST",
     body,
   }).then((response) => {
